@@ -19,11 +19,10 @@ package org.apache.mahout.math.als;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Iterables;
-import org.apache.mahout.math.DenseMatrix;
-import org.apache.mahout.math.Matrix;
-import org.apache.mahout.math.QRDecomposition;
+import org.apache.mahout.math.DenseVector;
 import org.apache.mahout.math.Vector;
-
+import org.jblas.DoubleMatrix;
+import org.jblas.Solve;
 
 import java.util.Iterator;
 
@@ -32,10 +31,9 @@ import java.util.Iterator;
  * <a href="http://www.hpl.hp.com/personal/Robert_Schreiber/papers/2008%20AAIM%20Netflix/netflix_aaim08(submitted).pdf">
  * this paper.</a>
  */
-@Deprecated
-public final class AlternatingLeastSquaresSolver {
+public final class JBlasAlternatingLeastSquaresSolver {
 
-  private AlternatingLeastSquaresSolver() {}
+  private JBlasAlternatingLeastSquaresSolver() {}
 
   //TODO make feature vectors a simple array
   public static Vector solve(Iterable<Vector> featureVectors, Vector ratingVector, double lambda, int numFeatures) {
@@ -48,75 +46,62 @@ public final class AlternatingLeastSquaresSolver {
 
     int nui = ratingVector.getNumNondefaultElements();
 
-    Matrix MiIi = createMiIi(featureVectors, numFeatures);
-    Matrix RiIiMaybeTransposed = createRiIiMaybeTransposed(ratingVector);
+    DoubleMatrix MiIi = createMiIi(featureVectors, numFeatures);
+    DoubleMatrix RiIiMaybeTransposed = createRiIiMaybeTransposed(ratingVector);
 
     /* compute Ai = MiIi * t(MiIi) + lambda * nui * E */
-    Matrix Ai = miTimesMiTransposePlusLambdaTimesNuiTimesE(MiIi, lambda, nui);
+    DoubleMatrix Ai = miTimesMiTransposePlusLambdaTimesNuiTimesE(MiIi, lambda, nui);
+
     /* compute Vi = MiIi * t(R(i,Ii)) */
-    Matrix Vi = MiIi.times(RiIiMaybeTransposed);
+    DoubleMatrix Vi = MiIi.mmul(RiIiMaybeTransposed);
+
     /* compute Ai * ui = Vi */
     return solve(Ai, Vi);
   }
 
-  private static Vector solve(Matrix Ai, Matrix Vi) {
-    return new QRDecomposition(Ai).solve(Vi).viewColumn(0);
+  private static Vector solve(DoubleMatrix Ai, DoubleMatrix Vi) {
+    return new DenseVector(Solve.solve(Ai, Vi).data, true);
   }
 
-  static Matrix addLambdaTimesNuiTimesE(Matrix matrix, double lambda, int nui) {
-    Preconditions.checkArgument(matrix.numCols() == matrix.numRows());
-    double lambdaTimesNui = lambda * nui;
-    int numCols = matrix.numCols();
-    for (int n = 0; n < numCols; n++) {
-      matrix.setQuick(n, n, matrix.getQuick(n, n) + lambdaTimesNui);
-    }
-    return matrix;
-  }
-
-  private static Matrix miTimesMiTransposePlusLambdaTimesNuiTimesE(Matrix MiIi, double lambda, int nui) {
+  private static DoubleMatrix miTimesMiTransposePlusLambdaTimesNuiTimesE(DoubleMatrix MiIi, double lambda, int nui) {
 
     double lambdaTimesNui = lambda * nui;
-    int rows = MiIi.numRows();
 
-    double[][] result = new double[rows][rows];
+    DoubleMatrix Ai = MiIi.mmul(MiIi.transpose());
 
-    for (int i = 0; i < rows; i++) {
-      for (int j = i; j < rows; j++) {
-        double dot = MiIi.viewRow(i).dot(MiIi.viewRow(j));
-        if (i != j) {
-          result[i][j] = dot;
-          result[j][i] = dot;
-        } else {
-          result[i][i] = dot + lambdaTimesNui;
-        }
-      }
+    for (int n = 0; n < MiIi.rows; n++) {
+      Ai.put(n, n, Ai.get(n, n) + lambdaTimesNui);
     }
-    return new DenseMatrix(result, true);
+
+    return Ai;
   }
 
-
-  static Matrix createMiIi(Iterable<Vector> featureVectors, int numFeatures) {
-    double[][] MiIi =  new double[numFeatures][Iterables.size(featureVectors)];
+  static DoubleMatrix createMiIi(Iterable<Vector> featureVectors, int numFeatures) {
+    int numRatings = Iterables.size(featureVectors);
+    DoubleMatrix MiIi = new DoubleMatrix(numFeatures, numRatings);
     int n = 0;
     for (Vector featureVector : featureVectors) {
       for (int m = 0; m < numFeatures; m++) {
-        MiIi[m][n] = featureVector.getQuick(m);
+        MiIi.put(m, n, featureVector.getQuick(m));
       }
       n++;
     }
-    return new DenseMatrix(MiIi, true);
+
+    return MiIi;
   }
 
-  static Matrix createRiIiMaybeTransposed(Vector ratingVector) {
+  static DoubleMatrix createRiIiMaybeTransposed(Vector ratingVector) {
     Preconditions.checkArgument(ratingVector.isSequentialAccess());
 
-    double[][] RiIiMaybeTransposed = new double[ratingVector.getNumNondefaultElements()][1];
+    int numRatings = ratingVector.getNumNondefaultElements();
+    double[] RiIiMaybeTransposed = new double[numRatings];
     Iterator<Vector.Element> ratingsIterator = ratingVector.iterateNonZero();
     int index = 0;
     while (ratingsIterator.hasNext()) {
       Vector.Element elem = ratingsIterator.next();
-      RiIiMaybeTransposed[index++][0] = elem.get();
+      RiIiMaybeTransposed[index++] = elem.get();
     }
-    return new DenseMatrix(RiIiMaybeTransposed, true);
+    return new DoubleMatrix(numRatings, 1, RiIiMaybeTransposed);
   }
+
 }

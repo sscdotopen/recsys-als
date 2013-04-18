@@ -19,43 +19,29 @@ package org.apache.mahout.math.als;
 
 import org.apache.mahout.math.DenseVector;
 import org.apache.mahout.math.MahoutTestCase;
-import org.apache.mahout.math.Matrix;
 import org.apache.mahout.math.RandomAccessSparseVector;
 import org.apache.mahout.math.SequentialAccessSparseVector;
-import org.apache.mahout.math.SparseMatrix;
 import org.apache.mahout.math.Vector;
+import org.jblas.DoubleMatrix;
 import org.junit.Test;
 
 import java.util.Arrays;
 
-public class AlternatingLeastSquaresSolverTest extends MahoutTestCase {
-
-  @Test
-  public void addLambdaTimesNuiTimesE() {
-    int nui = 5;
-    double lambda = 0.2;
-    Matrix matrix = new SparseMatrix(5, 5);
-
-    AlternatingLeastSquaresSolver.addLambdaTimesNuiTimesE(matrix, lambda, nui);
-
-    for (int n = 0; n < 5; n++) {
-      assertEquals(1.0, matrix.getQuick(n, n), EPSILON);
-    }
-  }
+public class JblasAlternatingLeastSquaresSolverTest extends MahoutTestCase {
 
   @Test
   public void createMiIi() {
     Vector f1 = new DenseVector(new double[] { 1, 2, 3 });
     Vector f2 = new DenseVector(new double[] { 4, 5, 6 });
 
-    Matrix miIi = AlternatingLeastSquaresSolver.createMiIi(Arrays.asList(f1, f2), 3);
+    DoubleMatrix miIi = JBlasAlternatingLeastSquaresSolver.createMiIi(Arrays.asList(f1, f2), 3);
 
-    assertEquals(1.0, miIi.getQuick(0, 0), EPSILON);
-    assertEquals(2.0, miIi.getQuick(1, 0), EPSILON);
-    assertEquals(3.0, miIi.getQuick(2, 0), EPSILON);
-    assertEquals(4.0, miIi.getQuick(0, 1), EPSILON);
-    assertEquals(5.0, miIi.getQuick(1, 1), EPSILON);
-    assertEquals(6.0, miIi.getQuick(2, 1), EPSILON);
+    assertEquals(1.0, miIi.get(0, 0), EPSILON);
+    assertEquals(2.0, miIi.get(1, 0), EPSILON);
+    assertEquals(3.0, miIi.get(2, 0), EPSILON);
+    assertEquals(4.0, miIi.get(0, 1), EPSILON);
+    assertEquals(5.0, miIi.get(1, 1), EPSILON);
+    assertEquals(6.0, miIi.get(2, 1), EPSILON);
   }
 
   @Test
@@ -65,13 +51,13 @@ public class AlternatingLeastSquaresSolverTest extends MahoutTestCase {
     ratings.setQuick(3, 3.0);
     ratings.setQuick(5, 5.0);
 
-    Matrix riIiMaybeTransposed = AlternatingLeastSquaresSolver.createRiIiMaybeTransposed(ratings);
-    assertEquals(1, riIiMaybeTransposed.numCols(), 1);
-    assertEquals(3, riIiMaybeTransposed.numRows(), 3);
+    DoubleMatrix riIiMaybeTransposed = JBlasAlternatingLeastSquaresSolver.createRiIiMaybeTransposed(ratings);
+    assertEquals(1, riIiMaybeTransposed.columns, 1);
+    assertEquals(3, riIiMaybeTransposed.rows, 3);
 
-    assertEquals(1.0, riIiMaybeTransposed.getQuick(0, 0), EPSILON);
-    assertEquals(3.0, riIiMaybeTransposed.getQuick(1, 0), EPSILON);
-    assertEquals(5.0, riIiMaybeTransposed.getQuick(2, 0), EPSILON);
+    assertEquals(1.0, riIiMaybeTransposed.get(0, 0), EPSILON);
+    assertEquals(3.0, riIiMaybeTransposed.get(1, 0), EPSILON);
+    assertEquals(5.0, riIiMaybeTransposed.get(2, 0), EPSILON);
   }
 
   @Test
@@ -82,7 +68,7 @@ public class AlternatingLeastSquaresSolverTest extends MahoutTestCase {
     ratings.setQuick(5, 5.0);
 
     try {
-      AlternatingLeastSquaresSolver.createRiIiMaybeTransposed(ratings);
+      JBlasAlternatingLeastSquaresSolver.createRiIiMaybeTransposed(ratings);
       fail();
     } catch (IllegalArgumentException e) {}
   }

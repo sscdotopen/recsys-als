@@ -28,7 +28,7 @@ import org.apache.mahout.common.iterator.sequencefile.SequenceFileDirIterable;
 import org.apache.mahout.common.iterator.sequencefile.SequenceFileDirValueIterator;
 import org.apache.mahout.math.Vector;
 import org.apache.mahout.math.VectorWritable;
-import org.apache.mahout.math.als.AlternatingLeastSquaresSolver;
+import org.apache.mahout.math.als.JBlasAlternatingLeastSquaresSolver;
 import org.apache.mahout.math.map.OpenIntObjectHashMap;
 
 import java.io.IOException;
@@ -68,6 +68,6 @@ final class ALS {
       featureVectors.add(uOrM.get(index));
     }
 
-    return AlternatingLeastSquaresSolver.solve(featureVectors, ratings, lambda, numFeatures);
+    return JBlasAlternatingLeastSquaresSolver.solve(featureVectors, ratings, lambda, numFeatures);
   }
 }

@@ -29,7 +29,7 @@ import org.apache.mahout.common.RandomUtils;
 import org.apache.mahout.math.DenseVector;
 import org.apache.mahout.math.SequentialAccessSparseVector;
 import org.apache.mahout.math.Vector;
-import org.apache.mahout.math.als.AlternatingLeastSquaresSolver;
+import org.apache.mahout.math.als.JBlasAlternatingLeastSquaresSolver;
 import org.apache.mahout.math.als.ImplicitFeedbackAlternatingLeastSquaresSolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -198,7 +198,7 @@ public class ALSWRFactorizer extends AbstractFactorizer {
 
               Vector userFeatures = usesImplicitFeedback
                   ? implicitFeedbackSolver.solve(sparseUserRatingVector(userPrefs))
-                  : AlternatingLeastSquaresSolver.solve(featureVectors, ratingVector(userPrefs), lambda, numFeatures);
+                  : JBlasAlternatingLeastSquaresSolver.solve(featureVectors, ratingVector(userPrefs), lambda, numFeatures);
 
               features.setFeatureColumnInU(userIndex(userID), userFeatures);
             }
@@ -235,7 +235,7 @@ public class ALSWRFactorizer extends AbstractFactorizer {
 
               Vector itemFeatures = usesImplicitFeedback
                   ? implicitFeedbackSolver.solve(sparseItemRatingVector(itemPrefs))
-                  : AlternatingLeastSquaresSolver.solve(featureVectors, ratingVector(itemPrefs), lambda, numFeatures);
+                  : JBlasAlternatingLeastSquaresSolver.solve(featureVectors, ratingVector(itemPrefs), lambda, numFeatures);
 
               features.setFeatureColumnInM(itemIndex(itemID), itemFeatures);
             }
