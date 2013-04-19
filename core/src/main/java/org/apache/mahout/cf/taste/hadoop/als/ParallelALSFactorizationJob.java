@@ -92,6 +92,8 @@ public class ParallelALSFactorizationJob extends AbstractJob {
   private double alpha;
   private int numThreadsPerSolver;
 
+  private Path preprocessedInputPath;
+
   public static void main(String[] args) throws Exception {
     ToolRunner.run(new ParallelALSFactorizationJob(), args);
   }
@@ -108,6 +110,8 @@ public class ParallelALSFactorizationJob extends AbstractJob {
     addOption("numIterations", null, "number of iterations", true);
     addOption("numThreadsPerSolver", null, "threads per solver mapper", String.valueOf(1));
 
+    addOption("skipPreprocessing", null, "", String.valueOf(false));
+
     Map<String,List<String>> parsedArgs = parseArguments(args);
     if (parsedArgs == null) {
       return -1;
@@ -121,6 +125,8 @@ public class ParallelALSFactorizationJob extends AbstractJob {
 
     numThreadsPerSolver = Integer.parseInt(getOption("numThreadsPerSolver"));
 
+    boolean skipPreprocessing = Boolean.parseBoolean(getOption("skipPreprocessing"));
+
     /*
     * compute the factorization A = U M'
     *
@@ -129,38 +135,16 @@ public class ParallelALSFactorizationJob extends AbstractJob {
     *           M (items x features) is the representation of items in the feature space
     */
 
-   /* create A' */
-    Job itemRatings = prepareJob(getInputPath(), pathToItemRatings(),
-        TextInputFormat.class, ItemRatingVectorsMapper.class, IntWritable.class,
-        VectorWritable.class, VectorSumReducer.class, IntWritable.class,
-        VectorWritable.class, SequenceFileOutputFormat.class);
-    itemRatings.setCombinerClass(VectorSumReducer.class);
-    boolean succeeded = itemRatings.waitForCompletion(true);
-    if (!succeeded) {
-      return -1;
+    if (skipPreprocessing) {
+      preprocessedInputPath = getInputPath();
+    } else {
+      preprocessedInputPath = getTempPath();
+      ToolRunner.run(getConf(), new PrepareALSJob(), new String[] {
+          "--input", getInputPath().toString(),
+          "--output", preprocessedInputPath.toString() });
     }
 
-    /* create A */
-    Job userRatings = prepareJob(pathToItemRatings(), pathToUserRatings(),
-        TransposeMapper.class, IntWritable.class, VectorWritable.class, MergeVectorsReducer.class, IntWritable.class,
-        VectorWritable.class);
-    userRatings.setCombinerClass(MergeVectorsCombiner.class);
-    succeeded = userRatings.waitForCompletion(true);
-    if (!succeeded) {
-      return -1;
-    }
-
-    //TODO this could be fiddled into one of the upper jobs
-    Job averageItemRatings = prepareJob(pathToItemRatings(), getTempPath("averageRatings"),
-        AverageRatingMapper.class, IntWritable.class, VectorWritable.class, MergeVectorsReducer.class,
-        IntWritable.class, VectorWritable.class);
-    averageItemRatings.setCombinerClass(MergeVectorsCombiner.class);
-    succeeded = averageItemRatings.waitForCompletion(true);
-    if (!succeeded) {
-      return -1;
-    }
-
-    Vector averageRatings = ALS.readFirstRow(getTempPath("averageRatings"), getConf());
+    Vector averageRatings = ALS.readFirstRow(new Path(preprocessedInputPath, "averageRatings"), getConf());
 
     /* create an initial M */
     initializeM(averageRatings);
@@ -206,30 +190,7 @@ public class ParallelALSFactorizationJob extends AbstractJob {
     }
   }
 
-  static class ItemRatingVectorsMapper extends Mapper<LongWritable,Text,IntWritable,VectorWritable> {
 
-    private final IntWritable itemIDWritable = new IntWritable();
-    private final VectorWritable ratingsWritable = new VectorWritable(true);
-    private final Vector ratings = new SequentialAccessSparseVector(Integer.MAX_VALUE, 1);
-
-    @Override
-    protected void map(LongWritable offset, Text line, Context ctx) throws IOException, InterruptedException {
-      String[] tokens = TasteHadoopUtils.splitPrefTokens(line.toString());
-      int userID = Integer.parseInt(tokens[0]);
-      int itemID = Integer.parseInt(tokens[1]);
-      float rating = Float.parseFloat(tokens[2]);
-
-      ratings.setQuick(userID, rating);
-
-      itemIDWritable.set(itemID);
-      ratingsWritable.set(ratings);
-
-      ctx.write(itemIDWritable, ratingsWritable);
-
-      // prepare instance for reuse
-      ratings.setQuick(userID, 0.0d);
-    }
-  }
 
   private void runSolver(Path ratings, Path output, Path pathToUorI, int currentIteration, String matrixName)
     throws ClassNotFoundException, IOException, InterruptedException {
@@ -265,28 +226,7 @@ public class ParallelALSFactorizationJob extends AbstractJob {
     }
   }
 
-  static class AverageRatingMapper extends Mapper<IntWritable,VectorWritable,IntWritable,VectorWritable> {
 
-    private final IntWritable firstIndex = new IntWritable(0);
-    private final Vector featureVector = new RandomAccessSparseVector(Integer.MAX_VALUE, 1);
-    private final VectorWritable featureVectorWritable = new VectorWritable();
-
-    @Override
-    protected void map(IntWritable r, VectorWritable v, Context ctx) throws IOException, InterruptedException {
-      RunningAverage avg = new FullRunningAverage();
-      Iterator<Vector.Element> elements = v.get().iterateNonZero();
-      while (elements.hasNext()) {
-        avg.addDatum(elements.next().get());
-      }
-
-      featureVector.setQuick(r.get(), avg.getAverage());
-      featureVectorWritable.set(featureVector);
-      ctx.write(firstIndex, featureVectorWritable);
-
-      // prepare instance for reuse
-      featureVector.setQuick(r.get(), 0.0d);
-    }
-  }
 
   private Path pathToM(int iteration) {
     return iteration == numIterations - 1 ? getOutputPath("M") : getTempPath("M-" + iteration);
@@ -297,10 +237,10 @@ public class ParallelALSFactorizationJob extends AbstractJob {
   }
 
   private Path pathToItemRatings() {
-    return getTempPath("itemRatings");
+    return new Path(preprocessedInputPath, "itemRatings");
   }
 
   private Path pathToUserRatings() {
-    return getOutputPath("userRatings");
+    return new Path(preprocessedInputPath, "userRatings");
   }
 }

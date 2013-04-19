@@ -60,7 +60,7 @@ public final class JBlasAlternatingLeastSquaresSolver {
   }
 
   private static Vector solve(DoubleMatrix Ai, DoubleMatrix Vi) {
-    return new DenseVector(Solve.solve(Ai, Vi).data, true);
+    return new DenseVector(Solve.solveSymmetric(Ai, Vi).data, true);
   }
 
   private static DoubleMatrix miTimesMiTransposePlusLambdaTimesNuiTimesE(DoubleMatrix MiIi, double lambda, int nui) {
