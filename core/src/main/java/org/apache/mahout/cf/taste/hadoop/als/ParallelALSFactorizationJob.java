@@ -19,31 +19,22 @@ package org.apache.mahout.cf.taste.hadoop.als;
 
 import com.google.common.io.Closeables;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.filecache.DistributedCache;
+import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IntWritable;
-import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.SequenceFile;
-import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.lib.input.SequenceFileInputFormat;
-import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
 import org.apache.hadoop.mapreduce.lib.map.MultithreadedMapper;
 import org.apache.hadoop.mapreduce.lib.output.SequenceFileOutputFormat;
 import org.apache.hadoop.util.ToolRunner;
-import org.apache.mahout.cf.taste.hadoop.TasteHadoopUtils;
-import org.apache.mahout.cf.taste.impl.common.FullRunningAverage;
-import org.apache.mahout.cf.taste.impl.common.RunningAverage;
 import org.apache.mahout.common.AbstractJob;
 import org.apache.mahout.common.RandomUtils;
-import org.apache.mahout.common.mapreduce.MergeVectorsCombiner;
-import org.apache.mahout.common.mapreduce.MergeVectorsReducer;
-import org.apache.mahout.common.mapreduce.TransposeMapper;
-import org.apache.mahout.common.mapreduce.VectorSumReducer;
+import org.apache.mahout.common.iterator.sequencefile.PathFilters;
 import org.apache.mahout.math.DenseVector;
-import org.apache.mahout.math.RandomAccessSparseVector;
-import org.apache.mahout.math.SequentialAccessSparseVector;
 import org.apache.mahout.math.Vector;
 import org.apache.mahout.math.VectorWritable;
 import org.slf4j.Logger;
@@ -84,6 +75,7 @@ public class ParallelALSFactorizationJob extends AbstractJob {
   static final String LAMBDA = ParallelALSFactorizationJob.class.getName() + ".lambda";
   static final String ALPHA = ParallelALSFactorizationJob.class.getName() + ".alpha";
   static final String FEATURE_MATRIX = ParallelALSFactorizationJob.class.getName() + ".featureMatrix";
+  static final String NUM_ENTITIES = ParallelALSFactorizationJob.class.getName() + ".numEntities";
 
   private boolean implicitFeedback;
   private int numIterations;
@@ -93,6 +85,9 @@ public class ParallelALSFactorizationJob extends AbstractJob {
   private int numThreadsPerSolver;
 
   private Path preprocessedInputPath;
+
+  private int numUsers = -1;
+  private int numItems = -1;
 
   public static void main(String[] args) throws Exception {
     ToolRunner.run(new ParallelALSFactorizationJob(), args);
@@ -112,6 +107,9 @@ public class ParallelALSFactorizationJob extends AbstractJob {
 
     addOption("skipPreprocessing", null, "", String.valueOf(false));
 
+    addOption("numUsers", null, "", false);
+    addOption("numItems", null, "", false);
+
     Map<String,List<String>> parsedArgs = parseArguments(args);
     if (parsedArgs == null) {
       return -1;
@@ -126,6 +124,14 @@ public class ParallelALSFactorizationJob extends AbstractJob {
     numThreadsPerSolver = Integer.parseInt(getOption("numThreadsPerSolver"));
 
     boolean skipPreprocessing = Boolean.parseBoolean(getOption("skipPreprocessing"));
+
+    if (hasOption("numUsers")) {
+      numUsers = Integer.parseInt(getOption("numUsers"));
+    }
+
+    if (hasOption("numItems")) {
+      numItems = Integer.parseInt(getOption("numItems"));
+    }
 
     /*
     * compute the factorization A = U M'
@@ -152,10 +158,12 @@ public class ParallelALSFactorizationJob extends AbstractJob {
     for (int currentIteration = 0; currentIteration < numIterations; currentIteration++) {
       /* broadcast M, read A row-wise, recompute U row-wise */
       log.info("Recomputing U (iteration {}/{})", currentIteration, numIterations);
-      runSolver(pathToUserRatings(), pathToU(currentIteration), pathToM(currentIteration - 1), currentIteration, "U");
+      runSolver(pathToUserRatings(), pathToU(currentIteration), pathToM(currentIteration - 1), currentIteration, "U",
+                numItems);
       /* broadcast U, read A' row-wise, recompute M row-wise */
       log.info("Recomputing M (iteration {}/{})", currentIteration, numIterations);
-      runSolver(pathToItemRatings(), pathToM(currentIteration), pathToU(currentIteration), currentIteration, "M");
+      runSolver(pathToItemRatings(), pathToM(currentIteration), pathToU(currentIteration), currentIteration, "M",
+                numUsers);
     }
 
     return 0;
@@ -192,8 +200,8 @@ public class ParallelALSFactorizationJob extends AbstractJob {
 
 
 
-  private void runSolver(Path ratings, Path output, Path pathToUorI, int currentIteration, String matrixName)
-    throws ClassNotFoundException, IOException, InterruptedException {
+  private void runSolver(Path ratings, Path output, Path pathToUorM, int currentIteration, String matrixName,
+    int numEntities) throws ClassNotFoundException, IOException, InterruptedException {
 
     int iterationNumber = currentIteration + 1;
     Class<? extends Mapper<IntWritable,VectorWritable,IntWritable,VectorWritable>> solverMapperClassInternal;
@@ -215,7 +223,9 @@ public class ParallelALSFactorizationJob extends AbstractJob {
     solverConf.set(LAMBDA, String.valueOf(lambda));
     solverConf.set(ALPHA, String.valueOf(alpha));
     solverConf.setInt(NUM_FEATURES, numFeatures);
-    solverConf.set(FEATURE_MATRIX, pathToUorI.toString());
+    solverConf.setInt(NUM_ENTITIES, numEntities);
+    solverConf.set(FEATURE_MATRIX, pathToUorM.toString());
+
 
     MultithreadedMapper.setMapperClass(solverForUorI, solverMapperClassInternal);
     MultithreadedMapper.setNumberOfThreads(solverForUorI, numThreadsPerSolver);
@@ -223,6 +233,17 @@ public class ParallelALSFactorizationJob extends AbstractJob {
     boolean succeeded = solverForUorI.waitForCompletion(true);
     if (!succeeded) {
       throw new IllegalStateException("Job failed!");
+    }
+  }
+
+  private void distributeViaCache(Path pathToUorM, Configuration conf) throws IOException {
+    FileSystem fs = FileSystem.get(pathToUorM.toUri(), conf);
+    FileStatus[] parts = fs.listStatus(pathToUorM, PathFilters.partFilter());
+    for (FileStatus part : parts) {
+      if (log.isDebugEnabled()) {
+        log.debug("Adding {} to distributed cache", part.getPath().toString());
+      }
+      DistributedCache.addCacheFile(part.getPath().toUri(), conf);
     }
   }
 

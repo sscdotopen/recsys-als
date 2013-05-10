@@ -28,6 +28,7 @@ import java.io.IOException;
 public class VectorSumReducer
     extends Reducer<WritableComparable<?>, VectorWritable, WritableComparable<?>, VectorWritable> {
 
+  //TODO remove if
   @Override
   protected void reduce(WritableComparable<?> key, Iterable<VectorWritable> values, Context ctx)
     throws IOException, InterruptedException {

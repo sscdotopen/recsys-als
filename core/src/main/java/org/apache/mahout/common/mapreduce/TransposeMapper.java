@@ -28,6 +28,7 @@ import java.util.Iterator;
 
 public class TransposeMapper extends Mapper<IntWritable,VectorWritable,IntWritable,VectorWritable> {
 
+  //TODO rework
   @Override
   protected void map(IntWritable r, VectorWritable v, Context ctx) throws IOException, InterruptedException {
     int row = r.get();

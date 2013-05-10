@@ -19,6 +19,8 @@ package org.apache.mahout.cf.taste.hadoop.als;
 
 import org.apache.hadoop.mapreduce.Mapper;
 
+import java.io.IOException;
+
 /**
  * Mapper class to be used by {@link MultithreadedSharingMapper}. Offers "global" before() and after() methods
  * that will typically be used to set up static variables.
@@ -39,10 +41,12 @@ public abstract class SharingMapper<K1,V1,K2,V2,S> extends Mapper<K1,V1,K2,V2> {
    *
    * @param context mapper's context
    */
-  abstract S createSharedInstance(Context context);
+  abstract S createSharedInstance(Context context) throws IOException;
 
-  final void setupSharedInstance(Context context) {
-    sharedInstance = createSharedInstance(context);
+  final void setupSharedInstance(Context context) throws IOException {
+    if (sharedInstance == null) {
+      sharedInstance = createSharedInstance(context);
+    }
   }
 
   final S getSharedInstance() {

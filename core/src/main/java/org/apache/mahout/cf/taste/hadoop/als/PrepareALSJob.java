@@ -21,8 +21,10 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.WritableComparable;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.SequenceFileOutputFormat;
 import org.apache.hadoop.util.ToolRunner;
@@ -32,12 +34,11 @@ import org.apache.mahout.cf.taste.impl.common.RunningAverage;
 import org.apache.mahout.common.AbstractJob;
 import org.apache.mahout.common.mapreduce.MergeVectorsCombiner;
 import org.apache.mahout.common.mapreduce.MergeVectorsReducer;
-import org.apache.mahout.common.mapreduce.TransposeMapper;
-import org.apache.mahout.common.mapreduce.VectorSumReducer;
 import org.apache.mahout.math.RandomAccessSparseVector;
 import org.apache.mahout.math.SequentialAccessSparseVector;
 import org.apache.mahout.math.Vector;
 import org.apache.mahout.math.VectorWritable;
+import org.apache.mahout.math.function.Functions;
 
 import java.io.IOException;
 import java.util.Iterator;
@@ -62,7 +63,7 @@ public class PrepareALSJob extends AbstractJob {
         TextInputFormat.class, ItemRatingVectorsMapper.class, IntWritable.class,
         VectorWritable.class, VectorSumReducer.class, IntWritable.class,
         VectorWritable.class, SequenceFileOutputFormat.class);
-    itemRatings.setCombinerClass(VectorSumReducer.class);
+    itemRatings.setCombinerClass(VectorSumCombiner.class);
     boolean succeeded = itemRatings.waitForCompletion(true);
     if (!succeeded) {
       return -1;
@@ -99,11 +100,77 @@ public class PrepareALSJob extends AbstractJob {
     return getOutputPath("userRatings");
   }
 
+  static class VectorSumCombiner
+      extends Reducer<WritableComparable<?>, VectorWritable, WritableComparable<?>, VectorWritable> {
+
+    private final VectorWritable vectorWritable = new VectorWritable();
+
+    @Override
+    protected void reduce(WritableComparable<?> key, Iterable<VectorWritable> values, Context ctx)
+        throws IOException, InterruptedException {
+
+      Iterator<VectorWritable> valueIterator = values.iterator();
+      Vector vector = valueIterator.next().get();
+
+      while (valueIterator.hasNext()) {
+         vector.assign(valueIterator.next().get(), Functions.PLUS);
+      }
+      vectorWritable.set(vector);
+      ctx.write(key, vectorWritable);
+    }
+  }
+
+  static class VectorSumReducer
+      extends Reducer<WritableComparable<?>, VectorWritable, WritableComparable<?>, VectorWritable> {
+
+    private final VectorWritable vectorWritable = new VectorWritable();
+
+    @Override
+    protected void reduce(WritableComparable<?> key, Iterable<VectorWritable> values, Context ctx)
+        throws IOException, InterruptedException {
+
+      Iterator<VectorWritable> valueIterator = values.iterator();
+      Vector vector = valueIterator.next().get();
+
+      while (valueIterator.hasNext()) {
+        vector.assign(valueIterator.next().get(), Functions.PLUS);
+      }
+
+      vectorWritable.set(new SequentialAccessSparseVector(vector));
+      ctx.write(key, vectorWritable);
+    }
+  }
+
+  static class TransposeMapper extends Mapper<IntWritable,VectorWritable,IntWritable,VectorWritable> {
+
+    private final VectorWritable vectorWritable = new VectorWritable();
+
+    @Override
+    protected void map(IntWritable r, VectorWritable v, Context ctx) throws IOException, InterruptedException {
+
+      RandomAccessSparseVector tmp = new RandomAccessSparseVector(Integer.MAX_VALUE, 1);
+
+      int row = r.get();
+      Iterator<Vector.Element> it = v.get().iterateNonZero();
+      while (it.hasNext()) {
+        Vector.Element e = it.next();
+
+        tmp.setQuick(row, e.get());
+        vectorWritable.set(tmp);
+        r.set(e.index());
+        ctx.write(r, vectorWritable);
+        // prepare instance for reuse
+        tmp.setQuick(row, 0.0);
+      }
+    }
+  }
+
   static class ItemRatingVectorsMapper extends Mapper<LongWritable,Text,IntWritable,VectorWritable> {
 
     private final IntWritable itemIDWritable = new IntWritable();
     private final VectorWritable ratingsWritable = new VectorWritable(true);
-    private final Vector ratings = new SequentialAccessSparseVector(Integer.MAX_VALUE, 1);
+    //private final Vector ratings = new SequentialAccessSparseVector(Integer.MAX_VALUE, 1);
+    private final Vector ratings = new RandomAccessSparseVector(Integer.MAX_VALUE, 1);
 
     @Override
     protected void map(LongWritable offset, Text line, Context ctx) throws IOException, InterruptedException {
